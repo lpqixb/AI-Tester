@@ -50,6 +50,26 @@
 | 国际要闻 | 英文标题保留原文；可在括号内附简短中文说明（若用户用中文提问） |
 | Hacker News | 英文标题保留原文 |
 
+## 保存 Markdown 文件
+
+汇总完成后**必须**调用 `save_markdown.py`，将内容保存为 `hot-news/{YYYYMMDDHHmmss}.md`：
+
+| 字段 | 说明 |
+| --- | --- |
+| 文件名 | `YYYYMMDDHHmmss.md`，例如 `20260829135300.md` |
+| 时区 | Asia/Shanghai |
+| 默认目录 | 仓库根目录 `hot-news/` |
+
+```bash
+python3 .cursor/skills/today-hot-news/scripts/fetch_hot_news.py --limit 10 > /tmp/hot_news.json
+python3 .cursor/skills/today-hot-news/scripts/save_markdown.py \
+  --input /tmp/hot_news.json \
+  --baidu /tmp/baidu_titles.json \
+  --output-dir hot-news
+```
+
+`--baidu` 接受 JSON 数组或 `{"titles": ["...", "..."]}`。脚本 stdout 返回 `savedPath` 供 Agent 告知用户。
+
 ## 请求参数建议
 
 ```bash

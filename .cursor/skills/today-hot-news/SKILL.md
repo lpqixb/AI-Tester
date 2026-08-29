@@ -40,29 +40,29 @@ description: "Fetch and summarize today's trending news from domestic and intern
 
 4. **合并与去重**：同一标题（忽略空格与标点）只保留一条，优先保留有 `pubDate` 的 RSS 条目。
 
-5. **格式化输出**（使用中文，固定模板）：
+5. **保存 Markdown 文件**（必须执行）：将汇总结果写入 `hot-news/` 目录，文件名格式为 **`YYYYMMDDHHmmss.md`**（年月日时分秒，Asia/Shanghai 时区，无分隔符）。
 
-   ```markdown
-   # 今日热点新闻（YYYY-MM-DD）
+   ```bash
+   # 1) 抓取 RSS 并写入临时 JSON
+   python3 .cursor/skills/today-hot-news/scripts/fetch_hot_news.py --limit 10 > /tmp/hot_news.json
 
-   ## 国内热搜（百度）
-   1. 标题
+   # 2) 将百度热搜标题写入 JSON 数组（示例）
+   # echo '["标题1","标题2"]' > /tmp/baidu_titles.json
 
-   ## 国内要闻
-   1. 标题 — [来源](链接)
-
-   ## 国际要闻
-   1. Title — [Source](link)
-
-   ## 科技热点
-   1. 标题 — [来源](链接)
-
-   ---
-   数据来源：百度热搜、Google 新闻、Hacker News、IT之家 | 抓取时间：YYYY-MM-DD HH:mm (Asia/Shanghai)
-   以上内容来自公开信息汇总，仅供参考。
+   # 3) 渲染并保存为 hot-news/20260829135300.md
+   python3 .cursor/skills/today-hot-news/scripts/save_markdown.py \
+     --input /tmp/hot_news.json \
+     --baidu /tmp/baidu_titles.json \
+     --output-dir hot-news
    ```
 
-6. **降级**：若脚本 `errors` 非空或有效条目少于 3 条，使用 `WebSearch` 补充（例如 `"today top news"` 或 `"今日热点新闻"`），并在输出末尾注明哪些源失败。
+   脚本 stdout 返回 `savedPath` 与 `filename`；**必须在回复中告知用户保存路径**。
+
+   若无百度热搜数据，省略 `--baidu` 参数即可。
+
+6. **回复用户**：简要展示各板块 Top 3，并附完整文件的保存路径（如 `hot-news/20260829135300.md`）。
+
+7. **降级**：若脚本 `errors` 非空或有效条目少于 3 条，使用 `WebSearch` 补充（例如 `"today top news"` 或 `"今日热点新闻"`），仍须保存 Markdown 并在文件末尾注明哪些源失败。
 
 ## 板块与脚本映射
 
@@ -81,8 +81,37 @@ description: "Fetch and summarize today's trending news from domestic and intern
 2. 调用 `WebFetch` 抓取原文，提取 2–3 句摘要。
 3. 若链接不可用，说明无法获取详情，不要臆测。
 
+## Markdown 文件格式
+
+保存内容与以下模板一致（由 `save_markdown.py` 自动生成）：
+
+```markdown
+# 今日热点新闻（YYYY-MM-DD）
+
+> 抓取时间：YYYY-MM-DD HH:mm (Asia/Shanghai)
+
+## 国内热搜（百度）
+1. 标题
+
+## 国内要闻
+1. 标题 — [来源](链接)
+
+## 国际要闻
+1. Title — [Source](link)
+
+## 科技热点
+1. 标题 — [来源](链接)
+
+---
+数据来源：... | 保存时间：...
+以上内容来自公开信息汇总，仅供参考。
+```
+
+默认保存目录：`hot-news/`（仓库根目录下）。
+
 ## 边界
 
 - 只汇总公开信息，不对新闻真实性做断言。
 - 不写入或请求 API Key。
+- 每次执行必须生成并保存一个 `{YYYYMMDDHHmmss}.md` 文件。
 - 知乎/微博热榜不在默认源内（JS/反爬不稳定）；用户明确要求时可尝试 `WebSearch` 补充。
