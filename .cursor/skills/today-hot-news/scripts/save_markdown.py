@@ -48,6 +48,27 @@ def format_item(index: int, item: dict[str, str]) -> str:
     return f"{index}. {title}"
 
 
+def format_international_item(index: int, item: dict[str, str]) -> str:
+    title = item.get("title", "").strip()
+    title_zh = item.get("titleZh", item.get("title_zh", "")).strip()
+    link = item.get("link", "").strip()
+    source = item.get("source", "").strip()
+
+    if title_zh and title_zh != title:
+        headline = title_zh
+        if link and source:
+            line = f"{index}. {headline} — [{source}]({link})"
+        elif link:
+            line = f"{index}. [{headline}]({link})"
+        elif source:
+            line = f"{index}. {headline} — {source}"
+        else:
+            line = f"{index}. {headline}"
+        return f"{line}\n   > 原文：{title}"
+
+    return format_item(index, item)
+
+
 def format_baidu_item(index: int, title: str) -> str:
     return f"{index}. {title.strip()}"
 
@@ -84,7 +105,7 @@ def render_markdown(data: dict[str, Any], baidu_titles: list[str] | None = None)
     if international_items:
         lines.extend(["## 国际要闻", ""])
         for i, item in enumerate(international_items, 1):
-            lines.append(format_item(i, item))
+            lines.append(format_international_item(i, item))
         lines.append("")
 
     tech_items = sections.get("tech", {}).get("items", [])
@@ -131,6 +152,46 @@ def load_baidu_titles(path: str | None) -> list[str]:
     raise ValueError("Baidu titles JSON must be an array or {\"titles\": [...]}")
 
 
+def load_intl_translations(path: str) -> list[str] | dict[str, str]:
+    text = Path(path).read_text(encoding="utf-8")
+    data = json.loads(text)
+    if isinstance(data, list):
+        return [str(t) for t in data]
+    if isinstance(data, dict):
+        if "translations" in data:
+            return [str(t) for t in data["translations"]]
+        return {str(k): str(v) for k, v in data.items()}
+    raise ValueError(
+        "International translations JSON must be an array, "
+        '{"translations": [...]}, or {"English title": "中文翻译"}'
+    )
+
+
+def apply_intl_translations(
+    data: dict[str, Any], translations: list[str] | dict[str, str]
+) -> dict[str, Any]:
+    """Attach titleZh to international items from parallel array or title-keyed map."""
+    sections = data.get("sections", {})
+    international = sections.get("international", {})
+    items = international.get("items", [])
+    if not items:
+        return data
+
+    if isinstance(translations, dict):
+        for item in items:
+            title = item.get("title", "").strip()
+            zh = translations.get(title, "").strip()
+            if zh:
+                item["titleZh"] = zh
+        return data
+
+    for item, zh in zip(items, translations):
+        zh = str(zh).strip()
+        if zh:
+            item["titleZh"] = zh
+    return data
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Save hot news as YYYYMMDDHHmmss.md")
     parser.add_argument(
@@ -142,6 +203,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--baidu",
         help="Optional JSON file with Baidu hot search titles (array or {\"titles\": [...]})",
+    )
+    parser.add_argument(
+        "--intl-translations",
+        help=(
+            "Optional Chinese translations for international items: "
+            "parallel array (same order), {\"translations\": [...]}, "
+            "or {\"English title\": \"中文标题\"}"
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -163,6 +232,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         data = load_json(args.input)
         baidu_titles = load_baidu_titles(args.baidu)
+        if args.intl_translations:
+            translations = load_intl_translations(args.intl_translations)
+            apply_intl_translations(data, translations)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 2
