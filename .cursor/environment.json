@@ -1,0 +1,4 @@
+{
+  "name": "AI-Tester",
+  "install": "python3 --version && python3 -m py_compile .cursor/skills/today-hot-news/scripts/fetch_hot_news.py .cursor/skills/today-hot-news/scripts/save_markdown.py"
+}
