@@ -48,7 +48,7 @@ def format_item(index: int, item: dict[str, str]) -> str:
     return f"{index}. {title}"
 
 
-def format_international_item(index: int, item: dict[str, str]) -> str:
+def format_bilingual_item(index: int, item: dict[str, str]) -> str:
     title = item.get("title", "").strip()
     title_zh = item.get("titleZh", item.get("title_zh", "")).strip()
     link = item.get("link", "").strip()
@@ -67,6 +67,9 @@ def format_international_item(index: int, item: dict[str, str]) -> str:
         return f"{line}\n   > 原文：{title}"
 
     return format_item(index, item)
+
+
+format_international_item = format_bilingual_item
 
 
 def format_baidu_item(index: int, title: str) -> str:
@@ -112,7 +115,7 @@ def render_markdown(data: dict[str, Any], baidu_titles: list[str] | None = None)
     if tech_items:
         lines.extend(["## 科技热点", ""])
         for i, item in enumerate(tech_items, 1):
-            lines.append(format_item(i, item))
+            lines.append(format_bilingual_item(i, item))
         lines.append("")
 
     sources_note = "百度热搜、Google 新闻、Hacker News、IT之家"
@@ -152,7 +155,7 @@ def load_baidu_titles(path: str | None) -> list[str]:
     raise ValueError("Baidu titles JSON must be an array or {\"titles\": [...]}")
 
 
-def load_intl_translations(path: str) -> list[str] | dict[str, str]:
+def load_translations(path: str) -> list[str] | dict[str, str]:
     text = Path(path).read_text(encoding="utf-8")
     data = json.loads(text)
     if isinstance(data, list):
@@ -162,18 +165,23 @@ def load_intl_translations(path: str) -> list[str] | dict[str, str]:
             return [str(t) for t in data["translations"]]
         return {str(k): str(v) for k, v in data.items()}
     raise ValueError(
-        "International translations JSON must be an array, "
+        "Translations JSON must be an array, "
         '{"translations": [...]}, or {"English title": "中文翻译"}'
     )
 
 
-def apply_intl_translations(
-    data: dict[str, Any], translations: list[str] | dict[str, str]
+load_intl_translations = load_translations
+
+
+def apply_section_translations(
+    data: dict[str, Any],
+    section: str,
+    translations: list[str] | dict[str, str],
 ) -> dict[str, Any]:
-    """Attach titleZh to international items from parallel array or title-keyed map."""
+    """Attach titleZh to section items from parallel array or title-keyed map."""
     sections = data.get("sections", {})
-    international = sections.get("international", {})
-    items = international.get("items", [])
+    block = sections.get(section, {})
+    items = block.get("items", [])
     if not items:
         return data
 
@@ -192,6 +200,18 @@ def apply_intl_translations(
     return data
 
 
+def apply_intl_translations(
+    data: dict[str, Any], translations: list[str] | dict[str, str]
+) -> dict[str, Any]:
+    return apply_section_translations(data, "international", translations)
+
+
+def apply_tech_translations(
+    data: dict[str, Any], translations: list[str] | dict[str, str]
+) -> dict[str, Any]:
+    return apply_section_translations(data, "tech", translations)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Save hot news as YYYYMMDDHHmmss.md")
     parser.add_argument(
@@ -208,6 +228,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--intl-translations",
         help=(
             "Optional Chinese translations for international items: "
+            "parallel array (same order), {\"translations\": [...]}, "
+            "or {\"English title\": \"中文标题\"}"
+        ),
+    )
+    parser.add_argument(
+        "--tech-translations",
+        help=(
+            "Optional Chinese translations for tech items (e.g. Hacker News): "
             "parallel array (same order), {\"translations\": [...]}, "
             "or {\"English title\": \"中文标题\"}"
         ),
@@ -233,8 +261,9 @@ def main(argv: list[str] | None = None) -> int:
         data = load_json(args.input)
         baidu_titles = load_baidu_titles(args.baidu)
         if args.intl_translations:
-            translations = load_intl_translations(args.intl_translations)
-            apply_intl_translations(data, translations)
+            apply_intl_translations(data, load_translations(args.intl_translations))
+        if args.tech_translations:
+            apply_tech_translations(data, load_translations(args.tech_translations))
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 2

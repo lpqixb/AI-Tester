@@ -40,14 +40,22 @@ description: "Fetch and summarize today's trending news from domestic and intern
 
 4. **合并与去重**：同一标题（忽略空格与标点）只保留一条，优先保留有 `pubDate` 的 RSS 条目。
 
-5. **翻译国际要闻**（必须执行）：`international` 板块来自 Google 新闻英文 RSS，标题通常为英文。须将每条英文标题翻译为中文，同时**保留英文原文与 `link` 链接**。
+5. **翻译英文标题**（必须执行）：以下板块的英文标题须翻译为中文，同时**保留英文原文与 `link` 链接**。
+
+   | 板块 | 典型英文来源 | 说明 |
+   | --- | --- | --- |
+   | `international` | Google 新闻（英文 RSS） | 通常全部为英文 |
+   | `tech` | Hacker News | 英文标题须翻译；IT之家等中文来源跳过 |
 
    - 判断：标题主体为英文（拉丁字母为主）时需翻译；已是中文则跳过。
-   - 将翻译结果写入 `/tmp/intl_translations.json`，格式任选其一：
-     - 与 `international.items` **顺序一致**的数组：`["中文标题1", "中文标题2", ...]`
-     - 或以英文原标题为键的对象：`{"English title": "中文标题", ...}`
+   - 将翻译结果分别写入：
+     - `/tmp/intl_translations.json`（国际要闻）
+     - `/tmp/tech_translations.json`（科技热点中的 Hacker News 等英文条目）
+   - JSON 格式任选其一：
+     - 与对应板块 `items` **顺序一致**的数组（中文条目可填空字符串 `""` 跳过）
+     - 或以英文原标题为键的对象：`{"English title": "中文标题", ...}`（**推荐**用于 `tech` 混合中英文）
    - 翻译要求：准确、简洁，符合新闻标题风格；不得编造或改动原文含义。
-   - 回复用户时，国际要闻同样展示「中文标题 + 原文 + 链接」。
+   - 回复用户时，已翻译条目须展示「中文标题 + 原文 + 链接」。
 
 6. **保存 Markdown 文件**（必须执行）：将汇总结果写入 `hot-news/` 目录，文件名格式为 **`YYYYMMDDHHmmss.md`**（年月日时分秒，Asia/Shanghai 时区，无分隔符）。
 
@@ -58,24 +66,26 @@ description: "Fetch and summarize today's trending news from domestic and intern
    # 2) 将百度热搜标题写入 JSON 数组（示例）
    # echo '["标题1","标题2"]' > /tmp/baidu_titles.json
 
-   # 3) 将国际要闻中文翻译写入 JSON（示例）
+   # 3) 将英文标题中文翻译写入 JSON（示例）
    # echo '["中文标题1","中文标题2"]' > /tmp/intl_translations.json
+   # echo '{"Hacker News title": "中文标题"}' > /tmp/tech_translations.json
 
    # 4) 渲染并保存为 hot-news/20260829135300.md
    python3 .cursor/skills/today-hot-news/scripts/save_markdown.py \
      --input /tmp/hot_news.json \
      --baidu /tmp/baidu_titles.json \
      --intl-translations /tmp/intl_translations.json \
+     --tech-translations /tmp/tech_translations.json \
      --output-dir hot-news
    ```
 
    脚本 stdout 返回 `savedPath` 与 `filename`；**必须在回复中告知用户保存路径**。
 
-   若无百度热搜数据，省略 `--baidu` 参数；若无英文国际要闻，可省略 `--intl-translations`。
+   若无百度热搜数据，省略 `--baidu`；对应板块无英文标题时，省略相应 `--*-translations` 参数。
 
-7. **回复用户**：简要展示各板块 Top 3。国际要闻须展示中文标题，并附英文原文与来源链接；附完整文件的保存路径（如 `hot-news/20260829135300.md`）。
+7. **回复用户**：简要展示各板块 Top 3。国际要闻与科技热点（Hacker News）的英文条目须展示中文标题，并附英文原文与来源链接；附完整文件的保存路径（如 `hot-news/20260829135300.md`）。
 
-8. **降级**：若脚本 `errors` 非空或有效条目少于 3 条，使用 `WebSearch` 补充（例如 `"today top news"` 或 `"今日热点新闻"`），仍须保存 Markdown 并在文件末尾注明哪些源失败。补充的国际新闻同样须中英双语保留原文与链接。
+8. **降级**：若脚本 `errors` 非空或有效条目少于 3 条，使用 `WebSearch` 补充（例如 `"today top news"` 或 `"今日热点新闻"`），仍须保存 Markdown 并在文件末尾注明哪些源失败。补充的英文新闻同样须中英双语保留原文与链接。
 
 ## 板块与脚本映射
 
@@ -94,12 +104,14 @@ description: "Fetch and summarize today's trending news from domestic and intern
 2. 调用 `WebFetch` 抓取原文，提取 2–3 句摘要。
 3. 若链接不可用，说明无法获取详情，不要臆测。
 
-## 国际要闻翻译
+## 英文标题翻译
+
+适用于 `international` 与 `tech`（Hacker News 等英文来源）板块。
 
 | 字段 | 说明 |
 | --- | --- |
 | `title` | RSS 原标题（英文），保存为「原文」 |
-| `titleZh` | 中文翻译（由 Agent 生成，经 `--intl-translations` 注入） |
+| `titleZh` | 中文翻译（由 Agent 生成，经 `--intl-translations` / `--tech-translations` 注入） |
 | `link` | 原文链接，必须保留 |
 
 ## Markdown 文件格式
@@ -122,7 +134,9 @@ description: "Fetch and summarize today's trending news from domestic and intern
    > 原文：English title
 
 ## 科技热点
-1. 标题 — [来源](链接)
+1. 中文标题 — [Hacker News](链接)
+   > 原文：English title
+2. 中文标题 — [IT之家](链接)
 
 ---
 数据来源：... | 保存时间：...
