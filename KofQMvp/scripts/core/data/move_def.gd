@@ -51,6 +51,10 @@ func is_normal() -> bool:
 	return has_tag("normal")
 
 
+func is_throw() -> bool:
+	return has_tag("throw") or attribute == "throw"
+
+
 func active_hitboxes(frame: int) -> Array:
 	var out: Array = []
 	for hb in hitboxes:

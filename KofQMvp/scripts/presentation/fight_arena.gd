@@ -8,6 +8,8 @@ extends Node2D
 @onready var pause_layer: Control = $CanvasLayer/Pause
 @onready var winner_label: Label = $CanvasLayer/Winner
 @onready var fx_flash: ColorRect = $CanvasLayer/SuperFlash
+@onready var round_dim: ColorRect = $CanvasLayer/RoundDim
+@onready var round_banner: Label = $CanvasLayer/RoundBanner
 
 var sim := FightSimulator.new()
 var cpu := CpuAi.new()
@@ -15,6 +17,7 @@ var _prev_p1 := 0
 var _prev_p2 := 0
 var paused: bool = false
 var result_timer: int = 0
+var banner_timer: int = 0
 var _sfx: Dictionary = {}
 
 
@@ -22,10 +25,14 @@ func _ready() -> void:
 	pause_layer.visible = false
 	winner_label.visible = false
 	fx_flash.visible = false
+	round_dim.visible = false
+	round_banner.visible = false
 	_load_sfx()
 	var training := GameSession.mode == GameSession.Mode.TRAINING
 	sim.setup(GameSession.p1_team, GameSession.p2_team, training)
 	sim.hit_connected.connect(_on_hit)
+	sim.fighter_ko.connect(_on_fighter_ko)
+	sim.round_begin.connect(_on_round_begin)
 	sim.match_over.connect(_on_match_over)
 	p1_view.setup(sim.p1)
 	p2_view.setup(sim.p2)
@@ -42,6 +49,8 @@ func _load_sfx() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	if p1_view == null or p2_view == null:
+		return
 	if paused:
 		return
 	if result_timer > 0:
@@ -74,6 +83,11 @@ func _physics_process(_delta: float) -> void:
 	sim.step(i1, i2)
 	p1_view.setup(sim.p1)
 	p2_view.setup(sim.p2)
+	if banner_timer > 0:
+		banner_timer -= 1
+		if banner_timer == 0:
+			round_banner.visible = false
+			round_dim.visible = false
 	_update_camera()
 	_update_hud()
 	_draw_projectiles()
@@ -161,11 +175,36 @@ func _play_sfx(key: String) -> void:
 	player.play()
 
 
+func _on_fighter_ko(_side: int) -> void:
+	_play_sfx("ko")
+	round_dim.visible = true
+	round_banner.visible = true
+	round_banner.text = "KO!"
+	banner_timer = 0  # stay until round_begin or match_over
+	fx_flash.visible = true
+	fx_flash.modulate.a = 0.7
+	var tw := create_tween()
+	tw.tween_property(fx_flash, "modulate:a", 0.0, 0.45)
+	tw.finished.connect(func(): fx_flash.visible = false)
+
+
+func _on_round_begin() -> void:
+	var n1 := sim.p1.char_def.display_name if sim.p1.char_def else "?"
+	var n2 := sim.p2.char_def.display_name if sim.p2.char_def else "?"
+	round_dim.visible = true
+	round_banner.visible = true
+	round_banner.text = "ROUND %d\n%s  vs  %s" % [sim.round_index, n1, n2]
+	banner_timer = 50
+	p1_view.setup(sim.p1)
+	p2_view.setup(sim.p2)
+
+
 func _on_match_over(winner: int) -> void:
 	GameSession.last_winner_side = winner
+	round_dim.visible = true
+	round_banner.visible = false
 	winner_label.visible = true
 	winner_label.text = "P%d WINS!" % winner
-	_play_sfx("ko")
 	result_timer = 120
 
 

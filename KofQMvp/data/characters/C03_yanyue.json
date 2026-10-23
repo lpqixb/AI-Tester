@@ -5,6 +5,7 @@
   "color": [0.55, 0.48, 0.38],
   "accent": [0.85, 0.7, 0.35],
   "max_hp": 1150,
+  "dash_speed": 330,
   "walk_speed": 170,
   "back_walk_speed": 140,
   "jump_speed": 480,

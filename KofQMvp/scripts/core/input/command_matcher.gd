@@ -18,11 +18,25 @@ static func kick_strength(inp: FightInput) -> String:
 	return ""
 
 
-static func detect(buffer: InputBuffer, crouching: bool) -> String:
+static func detect(buffer: InputBuffer, crouching: bool, airborne: bool = false) -> String:
 	var latest := buffer.latest()
+	# Throw: LP+LK (J+K). Must be on the ground; beats walking 5A.
+	if not airborne and latest.is_held(FightInput.BTN_LP) and latest.is_held(FightInput.BTN_LK):
+		if latest.just_pressed(FightInput.BTN_LP) or latest.just_pressed(FightInput.BTN_LK):
+			return "THROW"
+
 	var punch := punch_strength(latest)
 	var kick := kick_strength(latest)
 	if punch == "" and kick == "":
+		return ""
+
+	if airborne:
+		if punch == "C":
+			return "jC"
+		if punch != "":
+			return "jA"
+		if kick != "":
+			return "jB"
 		return ""
 
 	# Motions consume any punch button as "A" strength for MVP command table.
@@ -40,7 +54,7 @@ static func detect(buffer: InputBuffer, crouching: bool) -> String:
 		return "2A" if crouching else "5A"
 
 	if kick != "":
-		return "5B"
+		return "2B" if crouching else "5B"
 	return ""
 
 

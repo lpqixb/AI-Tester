@@ -22,6 +22,29 @@ func history() -> Array[FightInput]:
 	return _frames
 
 
+## Rising-edge double tap of any dir in `dirs` within `window` frames (KOF 66/44).
+func just_double_tap(dirs: Array, window: int = 12) -> bool:
+	if _frames.size() < 3:
+		return false
+	var latest: int = _frames[_frames.size() - 1].dir
+	if not dirs.has(latest):
+		return false
+	# This frame must be a tap (previous frame was not that dir).
+	if dirs.has(_frames[_frames.size() - 2].dir):
+		return false
+	var start: int = maxi(0, _frames.size() - window)
+	var presses := 0
+	var prev := -1
+	if start > 0:
+		prev = _frames[start - 1].dir
+	for i in range(start, _frames.size()):
+		var d: int = _frames[i].dir
+		if dirs.has(d) and not dirs.has(prev):
+			presses += 1
+		prev = d
+	return presses >= 2
+
+
 ## Very small helper: returns true if dir sequence appears in order within window.
 func match_dirs(sequence: Array[int], window: int = 8) -> bool:
 	if sequence.is_empty() or _frames.is_empty():

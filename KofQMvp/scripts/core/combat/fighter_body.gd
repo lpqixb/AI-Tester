@@ -3,7 +3,7 @@ extends RefCounted
 ## Full fighter state for Phase 1–5 combat simulation.
 
 enum State {
-	IDLE, WALK, CROUCH, JUMP, ATTACK, BLOCK, BLOCKSTUN, HITSTUN, KNOCKDOWN, EVADE, INTRO, KO
+	IDLE, WALK, CROUCH, JUMP, ATTACK, BLOCK, BLOCKSTUN, HITSTUN, KNOCKDOWN, EVADE, BACKDASH, DASH, INTRO, KO
 }
 
 var player_id: int = 0
@@ -19,6 +19,7 @@ var crouching: bool = false
 
 var walk_speed: float = 220.0
 var back_walk_speed: float = 180.0
+var dash_speed: float = 400.0
 var jump_speed: float = 520.0
 var gravity: float = 1600.0
 var ground_y: float = 560.0
@@ -53,6 +54,7 @@ func apply_character(cdef: CharacterDef, bal: Dictionary) -> void:
 	hp = cdef.max_hp
 	walk_speed = cdef.walk_speed
 	back_walk_speed = cdef.back_walk_speed
+	dash_speed = cdef.dash_speed
 	jump_speed = cdef.jump_speed
 	gravity = cdef.gravity
 	hurt = Aabb2.new(cdef.hurt.x, cdef.hurt.y, cdef.hurt.w, cdef.hurt.h)
@@ -61,12 +63,13 @@ func apply_character(cdef: CharacterDef, bal: Dictionary) -> void:
 	stage_right = float(bal.get("stage_right", 1200))
 
 
-func reset(at: Vector2, face: int, intro_invuln: int = 0) -> void:
+func reset(at: Vector2, face: int, intro_invuln: int = 0, refill_hp: bool = true) -> void:
 	pos = at
 	vel = Vector2.ZERO
 	facing = face
 	state = State.INTRO if intro_invuln > 0 else State.IDLE
-	hp = max_hp
+	if refill_hp:
+		hp = max_hp
 	on_ground = true
 	crouching = false
 	hitstop = 0
@@ -103,7 +106,7 @@ func spend_meter(amount: float) -> bool:
 
 
 func can_act() -> bool:
-	return state in [State.IDLE, State.WALK, State.CROUCH, State.JUMP, State.BLOCK]
+	return state in [State.IDLE, State.WALK, State.CROUCH, State.JUMP, State.BLOCK, State.DASH]
 
 
 func is_invulnerable() -> bool:
@@ -170,9 +173,12 @@ func tick(inp: FightInput, dt: float, bal: Dictionary) -> void:
 		_integrate(dt)
 		return
 
-	if state == State.EVADE:
+	if state == State.EVADE or state == State.BACKDASH:
 		stun_timer -= 1
-		vel.x = float(facing) * -walk_speed * 1.4
+		if state == State.EVADE:
+			vel.x = float(facing) * -walk_speed * 1.4
+		else:
+			vel.x = move_toward(vel.x, 0.0, 280.0 * dt)
 		if stun_timer <= 0:
 			state = State.IDLE
 			vel.x = 0.0
@@ -196,20 +202,41 @@ func _tick_neutral(inp: FightInput, dt: float, bal: Dictionary) -> void:
 		_integrate(dt)
 		return
 
-	var cmd := CommandMatcher.detect(input_buffer, crouching)
+	var cmd := CommandMatcher.detect(input_buffer, crouching, not on_ground)
 	if cmd != "" and _try_start_move(cmd, false):
 		_integrate(dt)
 		return
 
-	# Block
-	if on_ground and _is_holding_back(inp) and not crouching:
-		# standing block only when not attacking — allow crouch block too
-		pass
-	if on_ground and _is_holding_back(inp):
-		state = State.BLOCK
+	# 66 run / 44 backdash. Holding back still auto-blocks via wants_block.
+	if on_ground:
+		var tap_window := int(bal.get("double_tap_window", 12))
+		var fwd := 6 if facing > 0 else 4
+		var back := 4 if facing > 0 else 6
+		if input_buffer.just_double_tap([back], tap_window):
+			_start_backdash(bal)
+			_integrate(dt)
+			return
+		if input_buffer.just_double_tap([fwd], tap_window):
+			state = State.DASH
+			last_move_id = "dash"
+
+	if state == State.DASH and on_ground:
+		var holding_fwd := (facing > 0 and inp.dir in [6, 9]) or (facing < 0 and inp.dir in [4, 7])
+		if inp.dir in [7, 8, 9]:
+			vel.x = float(facing) * dash_speed * 0.55
+			vel.y = -jump_speed
+			on_ground = false
+			crouching = false
+			state = State.JUMP
+			_integrate(dt)
+			return
+		if holding_fwd:
+			vel.x = float(facing) * dash_speed
+			crouching = false
+			_integrate(dt)
+			return
+		state = State.IDLE
 		vel.x = 0.0
-		_integrate(dt)
-		return
 
 	var axis := _axis(inp)
 	if on_ground:
@@ -218,6 +245,8 @@ func _tick_neutral(inp: FightInput, dt: float, bal: Dictionary) -> void:
 			on_ground = false
 			crouching = false
 			state = State.JUMP
+			# Extra forward speed so a close jump can clear the opponent.
+			vel.x = float(axis) * walk_speed * 1.35
 		elif crouching:
 			vel.x = 0.0
 			state = State.CROUCH
@@ -229,7 +258,12 @@ func _tick_neutral(inp: FightInput, dt: float, bal: Dictionary) -> void:
 			vel.x = 0.0
 			state = State.IDLE
 	else:
-		vel.x = float(axis) * walk_speed * 0.85
+		# Keep jump momentum so you can land behind; air control steers, does not snap.
+		var target := float(axis) * walk_speed * 0.9
+		if axis == 0:
+			vel.x = move_toward(vel.x, 0.0, walk_speed * 1.1 * dt)
+		else:
+			vel.x = move_toward(vel.x, target, walk_speed * 6.0 * dt)
 		state = State.JUMP
 
 	_integrate(dt)
@@ -254,19 +288,28 @@ func _tick_attack(inp: FightInput, dt: float, bal: Dictionary) -> void:
 		pos.x += float(facing) * current_move.teleport_x
 		pos.x = clampf(pos.x, stage_left, stage_right)
 
-	# Cancel into special/super
-	var cmd := CommandMatcher.detect(input_buffer, crouching)
+	# Cancel into special/super (ground only for now)
+	var cmd := CommandMatcher.detect(input_buffer, crouching, not on_ground)
 	if cmd != "" and _can_cancel_into(cmd):
 		if _try_start_move(cmd, true):
 			_integrate(dt)
 			return
 
+	var was_air := not on_ground
 	if move_frame > current_move.total_frames():
 		current_move = null
 		move_frame = 0
-		state = State.CROUCH if crouching else State.IDLE
-		vel.x = 0.0
+		if not on_ground:
+			state = State.JUMP
+		else:
+			state = State.CROUCH if crouching else State.IDLE
+			vel.x = 0.0
 	_integrate(dt)
+	if was_air and on_ground and state == State.ATTACK:
+		current_move = null
+		move_frame = 0
+		state = State.IDLE
+		vel.x *= 0.4
 
 
 func _try_start_move(cmd: String, is_cancel: bool) -> bool:
@@ -274,6 +317,10 @@ func _try_start_move(cmd: String, is_cancel: bool) -> bool:
 		return false
 	var move: MoveDef = char_def.get_by_command(cmd)
 	if move == null:
+		return false
+	if move.has_tag("jump") and on_ground:
+		return false
+	if (move.is_throw() or move.has_tag("throw")) and not on_ground:
 		return false
 	if move.meter_cost > 0.0 and not spend_meter(move.meter_cost):
 		return false
@@ -284,10 +331,8 @@ func _try_start_move(cmd: String, is_cancel: bool) -> bool:
 	pending_projectile.clear()
 	state = State.ATTACK
 	last_move_id = move.move_id
-	vel.x = 0.0
-	if not on_ground and move.is_normal():
-		# allow jump normals later; for MVP ground focus
-		pass
+	if on_ground:
+		vel.x = 0.0
 	return true
 
 
@@ -305,6 +350,15 @@ func _can_cancel_into(cmd: String) -> bool:
 		if tag == "super" and next.is_super():
 			return true
 	return false
+
+
+func _start_backdash(bal: Dictionary) -> void:
+	state = State.BACKDASH
+	stun_timer = int(bal.get("backdash_frames", 18))
+	invuln_timer = int(bal.get("backdash_invuln_frames", 10))
+	current_move = null
+	last_move_id = "backdash"
+	vel.x = float(facing) * -float(bal.get("backdash_speed", 420))
 
 
 func _try_evade(bal: Dictionary) -> void:

@@ -7,6 +7,7 @@
   "max_hp": 920,
   "walk_speed": 260,
   "back_walk_speed": 210,
+  "dash_speed": 470,
   "jump_speed": 540,
   "gravity": 1550,
   "hurt": [-24, -112, 48, 112],

@@ -86,13 +86,14 @@ text = "Arcade 街机"
 [node name="Hints" type="Label" parent="."]
 layout_mode = 0
 offset_left = 40.0
-offset_top = 600.0
-offset_right = 1240.0
+offset_top = 580.0
+offset_right = 1220.0
 offset_bottom = 700.0
 theme_override_colors/font_color = Color(0.7, 0.74, 0.8, 1)
-text = "1P: WASD 移动 | J轻拳 K轻脚 U中拳 I中脚(后+I回避)
-2P: 方向键 | Num0 轻拳 Num. 轻脚  (Esc 暂停)
-连招例: 5A(J) → 236A(↓↘→+J) → 236236A(双波动+J)  耗气超必杀"
+autowrap_mode = 3
+text = "1P: WASD 走跳蹲 | A 后走 | 连点 D 冲刺 | 连点 A 后跳
+跳过对手可换边跳攻 | 跳中 J/K/U | 近身 J+K 投 | 后+I 回避
+连招: J → ↓↘→+J → 双波动+J 超必杀"
 
 [connection signal="pressed" from="VBox/Versus" to="." method="_on_versus_pressed"]
 [connection signal="pressed" from="VBox/Training" to="." method="_on_training_pressed"]

@@ -40,9 +40,16 @@ func _draw() -> void:
 		col = col.lerp(Color.WHITE, flash)
 	if body.state == FighterBody.State.KO:
 		col = col.darkened(0.45)
+		draw_ellipse(Vector2(0, 4), 48.0, 10.0, Color(0, 0, 0, 0.28))
+		draw_rect(Rect2(-52, -30, 88, 26), col)
+		draw_circle(Vector2(-48, -32), 22, col)
+		draw_circle(Vector2(-48, -32), 22, Color(0, 0, 0, 0), false, 2.0)
+		draw_circle(Vector2(-54, -36), 3.5, Color(0.1, 0.1, 0.12))
+		draw_circle(Vector2(-42, -36), 3.5, Color(0.1, 0.1, 0.12))
+		return
 
-	# Shadow
-	draw_ellipse(Vector2(0, 4), Vector2(36, 10), Color(0, 0, 0, 0.25))
+	# Shadow (Godot 4.7 CanvasItem.draw_ellipse)
+	draw_ellipse(Vector2(0, 4), 36.0, 10.0, Color(0, 0, 0, 0.25))
 
 	var crouch := body.crouching or body.state == FighterBody.State.CROUCH
 	var head_y := -100.0 if not crouch else -70.0
@@ -67,9 +74,18 @@ func _draw() -> void:
 		if body.current_move.is_super():
 			reach = 78.0
 			draw_circle(Vector2(reach * 0.5, head_y), 22, Color(accent.r, accent.g, accent.b, 0.55))
-		draw_rect(Rect2(12, head_y + 10, reach, 16), accent)
-	elif body.state == FighterBody.State.EVADE:
+		if body.current_move.is_throw():
+			draw_rect(Rect2(8, head_y + 8, 44, 22), accent)
+			draw_circle(Vector2(48, head_y + 18), 12, accent)
+		elif body.current_move.has_tag("jump"):
+			draw_rect(Rect2(14, head_y + 18, reach, 14), accent)
+		else:
+			draw_rect(Rect2(12, head_y + 10, reach, 16), accent)
+	elif body.state == FighterBody.State.EVADE or body.state == FighterBody.State.BACKDASH:
 		draw_circle(Vector2(0, head_y), 34, Color(1, 1, 1, 0.25))
+	elif body.state == FighterBody.State.DASH:
+		draw_rect(Rect2(-28, head_y + 20, 18, 8), Color(1, 1, 1, 0.35))
+		draw_rect(Rect2(-40, head_y + 36, 16, 6), Color(1, 1, 1, 0.22))
 
 	# Hit / block spark
 	if spark_timer > 0:
@@ -88,11 +104,3 @@ func _draw() -> void:
 			if body.facing < 0:
 				r.position.x = -(r.position.x + r.size.x)
 			draw_rect(r, Color(1, 0.2, 0.2, 0.35))
-
-
-func draw_ellipse(center: Vector2, radii: Vector2, color: Color) -> void:
-	var pts := PackedVector2Array()
-	for i in 16:
-		var a := TAU * float(i) / 16.0
-		pts.append(center + Vector2(cos(a) * radii.x, sin(a) * radii.y))
-	draw_colored_polygon(pts, color)

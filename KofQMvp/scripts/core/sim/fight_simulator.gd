@@ -3,6 +3,7 @@ extends RefCounted
 ## Local authoritative fight sim with teams, meter, projectiles.
 
 signal fighter_ko(side: int)
+signal round_begin()
 signal match_over(winner_side: int)
 signal hit_connected(attacker_side: int, blocked: bool, is_super: bool)
 
@@ -24,7 +25,10 @@ var meter_max: float = 300.0
 var tick: int = 0
 var frozen: bool = false
 var winner_side: int = 0  # 0 none, 1 p1, 2 p2
-var swap_cooldown: int = 0
+var round_pause: int = 0
+var pending_ko_side: int = 0
+var pending_match_over: bool = false
+var round_index: int = 1
 
 # Training flags
 var training: bool = false
@@ -56,6 +60,10 @@ func setup(t1: Array, t2: Array, is_training: bool = false) -> void:
 	lock_meter = is_training
 	frozen = false
 	winner_side = 0
+	round_pause = 0
+	pending_ko_side = 0
+	pending_match_over = false
+	round_index = 1
 	tick = 0
 	projectiles.clear()
 	_bind_meters()
@@ -115,24 +123,34 @@ func _make_meter_callable(side: int) -> Callable:
 		return null
 
 
-func _spawn_side(side: int, first: bool) -> void:
-	var intro := 0 if first else int(balance.get("intro_invuln_frames", 40))
+func _start_x(side: int) -> float:
+	if side == 1:
+		return float(balance.get("p1_start_x", 360))
+	return float(balance.get("p2_start_x", 920))
+
+
+func _spawn_side(side: int, first: bool, refill_hp: bool = true) -> void:
+	var intro := 0 if first else int(balance.get("round_reset_intro", balance.get("intro_invuln_frames", 40)))
+	var gy := float(balance.get("ground_y", 560))
 	if side == 1:
 		var cdef: CharacterDef = db.get_char(team1[idx1])
 		p1.apply_character(cdef, balance)
 		p1.meter_ref = _make_meter_callable(1)
-		p1.reset(Vector2(360, float(balance.get("ground_y", 560))), 1, intro)
+		p1.reset(Vector2(_start_x(1), gy), 1, intro, refill_hp)
 	else:
 		var cdef2: CharacterDef = db.get_char(team2[idx2])
 		p2.apply_character(cdef2, balance)
 		p2.meter_ref = _make_meter_callable(2)
-		p2.reset(Vector2(920, float(balance.get("ground_y", 560))), -1, intro)
+		p2.reset(Vector2(_start_x(2), gy), -1, intro, refill_hp)
 
 
 func reset_training_positions() -> void:
 	projectiles.clear()
 	frozen = false
 	winner_side = 0
+	round_pause = 0
+	pending_ko_side = 0
+	pending_match_over = false
 	_spawn_side(1, true)
 	_spawn_side(2, true)
 	if lock_meter:
@@ -144,19 +162,17 @@ func step(i1: FightInput, i2: FightInput, dt: float = FightClock.TICK_DELTA) -> 
 	if frozen:
 		return
 	tick += 1
-	if swap_cooldown > 0:
-		swap_cooldown -= 1
+	if round_pause > 0:
+		round_pause -= 1
+		_tick_ko_hold(dt)
+		if round_pause == 0:
+			_finish_ko_hold()
+		return
 
 	if training and dummy_block:
 		i2 = _force_block_input(i2, dummy_crouch_block)
 
-	# Face each other
-	if p1.pos.x <= p2.pos.x:
-		p1.facing = 1
-		p2.facing = -1
-	else:
-		p1.facing = -1
-		p2.facing = 1
+	_update_facing()
 
 	p1.tick(i1, dt, balance)
 	p2.tick(i2, dt, balance)
@@ -210,13 +226,62 @@ func _tick_projectiles(dt: float) -> void:
 	projectiles = projectiles.filter(func(p): return not p.dead)
 
 
+func _update_facing() -> void:
+	# Hysteresis so overlapping during a cross-up does not flicker facing.
+	var gap: float = p2.pos.x - p1.pos.x
+	if absf(gap) <= 12.0:
+		return
+	p1.facing = 1 if gap > 0.0 else -1
+	p2.facing = -p1.facing
+
+
+func _tick_ko_hold(dt: float) -> void:
+	var dead: FighterBody = p1 if pending_ko_side == 1 else p2
+	dead.tick(FightInput.new(), dt, balance)
+
+
+func _finish_ko_hold() -> void:
+	if pending_match_over:
+		frozen = true
+		match_over.emit(winner_side)
+		last_event = "P%d wins" % winner_side
+		pending_ko_side = 0
+		return
+	_begin_next_round()
+
+
+func _begin_next_round() -> void:
+	var ko_side := pending_ko_side
+	pending_ko_side = 0
+	if ko_side == 1:
+		idx1 += 1
+	else:
+		idx2 += 1
+	projectiles.clear()
+	var intro := int(balance.get("round_reset_intro", 36))
+	var gy := float(balance.get("ground_y", 560))
+	# Newcomer on the KO side; survivor keeps HP but both return to corners.
+	if ko_side == 1:
+		_spawn_side(1, false)
+		p2.reset(Vector2(_start_x(2), gy), -1, intro, false)
+	else:
+		_spawn_side(2, false)
+		p1.reset(Vector2(_start_x(1), gy), 1, intro, false)
+	round_index += 1
+	last_event = "round %d" % round_index
+	round_begin.emit()
+
+
 func _separate() -> void:
+	# Airborne fighters may pass through to land on the far side (cross-up).
+	if not p1.on_ground or not p2.on_ground:
+		return
 	var min_dist := float(balance.get("min_fighter_gap", 56))
 	var dx: float = p2.pos.x - p1.pos.x
 	if absf(dx) >= min_dist:
 		return
 	var push: float = (min_dist - absf(dx)) * 0.5
-	var s: float = signf(dx) if dx != 0.0 else 1.0
+	var s: float = signf(dx) if dx != 0.0 else float(p1.facing)
 	p1.pos.x -= push * s
 	p2.pos.x += push * s
 	p1.pos.x = clampf(p1.pos.x, p1.stage_left, p1.stage_right)
@@ -235,7 +300,20 @@ func _resolve_strikes(atk: FighterBody, dfd: FighterBody, dfd_inp: FightInput) -
 		var move: MoveDef = entry["move"]
 		if not box.overlaps(dfd.world_hurtbox()):
 			continue
-		var blocked := _is_blocked(dfd, dfd_inp, move)
+		var blocked := false
+		if move.is_throw():
+			if not dfd.on_ground:
+				continue
+			if dfd.state in [
+				FighterBody.State.ATTACK, FighterBody.State.HITSTUN, FighterBody.State.KNOCKDOWN,
+				FighterBody.State.EVADE, FighterBody.State.BACKDASH, FighterBody.State.INTRO
+			]:
+				continue
+			blocked = false
+			dfd.pos.x = atk.pos.x + float(atk.facing) * 42.0
+			dfd.pos.x = clampf(dfd.pos.x, dfd.stage_left, dfd.stage_right)
+		else:
+			blocked = _is_blocked(dfd, dfd_inp, move)
 		dfd.take_hit(move, atk.facing, blocked)
 		atk.mark_hit_connected()
 		atk.hitstop = move.hitstop
@@ -272,7 +350,12 @@ func _resolve_projectile_hits() -> void:
 
 
 func _is_blocked(dfd: FighterBody, inp: FightInput, move: MoveDef) -> bool:
-	if dfd.state in [FighterBody.State.HITSTUN, FighterBody.State.KNOCKDOWN, FighterBody.State.ATTACK, FighterBody.State.EVADE]:
+	if move.is_throw():
+		return false
+	if dfd.state in [
+		FighterBody.State.HITSTUN, FighterBody.State.KNOCKDOWN, FighterBody.State.ATTACK,
+		FighterBody.State.EVADE, FighterBody.State.BACKDASH, FighterBody.State.DASH
+	]:
 		return false
 	var holding_back := dfd.wants_block(inp) or dfd.state == FighterBody.State.BLOCK or dfd.state == FighterBody.State.BLOCKSTUN
 	if not holding_back:
@@ -296,35 +379,23 @@ func _training_locks() -> void:
 
 
 func _check_ko() -> void:
-	if p1.state == FighterBody.State.KO and swap_cooldown <= 0:
+	if round_pause > 0 or pending_ko_side != 0:
+		return
+	if p1.state == FighterBody.State.KO:
 		_on_ko(1)
-	elif p2.state == FighterBody.State.KO and swap_cooldown <= 0:
+	elif p2.state == FighterBody.State.KO:
 		_on_ko(2)
 
 
 func _on_ko(side: int) -> void:
-	swap_cooldown = 30
+	pending_ko_side = side
+	round_pause = int(balance.get("ko_hold_frames", 78))
+	last_event = "KO"
 	fighter_ko.emit(side)
-	if side == 1:
-		idx1 += 1
-		if idx1 >= team1.size():
-			frozen = true
-			winner_side = 2
-			match_over.emit(2)
-			last_event = "P2 wins"
-			return
-		projectiles.clear()
-		_spawn_side(1, false)
-	else:
-		idx2 += 1
-		if idx2 >= team2.size():
-			frozen = true
-			winner_side = 1
-			match_over.emit(1)
-			last_event = "P1 wins"
-			return
-		projectiles.clear()
-		_spawn_side(2, false)
+	var last_member := (side == 1 and idx1 >= team1.size() - 1) or (side == 2 and idx2 >= team2.size() - 1)
+	if last_member:
+		pending_match_over = true
+		winner_side = 2 if side == 1 else 1
 
 
 func remaining(side: int) -> int:
